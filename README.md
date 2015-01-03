@@ -1,0 +1,4 @@
+netrc
+=====
+
+Parses .netrc
