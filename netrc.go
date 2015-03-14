@@ -8,6 +8,7 @@ import (
 	"syscall"
 )
 
+// Holds one entry of .netrc as a tuple of login name, password and account name.
 type Entry struct {
 	Login, Password, Account string
 }
@@ -16,6 +17,7 @@ type Netrc struct {
 	Entries map[string]Entry
 }
 
+// Gives the location of .netrc according to convention
 func Location() string {
 	location := ".netrc"
 
@@ -39,6 +41,7 @@ func checkPermissions(fileName string) error {
 	return nil
 }
 
+// Reads .netrc from it's default location
 func Parse() (*Netrc, error) {
 	fileName := Location()
 
@@ -99,6 +102,7 @@ func Parse() (*Netrc, error) {
 	return netrc, scanner.Err()
 }
 
+// Writes back .netrc to disk
 func (netrc Netrc) Save() error {
 	file, err := os.OpenFile(Location(), os.O_WRONLY|os.O_TRUNC, 0600)
 
