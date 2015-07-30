@@ -1,4 +1,4 @@
-package netrc
+package main
 
 import (
 	"bufio"
@@ -6,16 +6,21 @@ import (
 	"os"
 	"runtime"
 	"syscall"
+	"regexp"
+	"strings"
 )
 
 // Holds one entry of .netrc as a tuple of login name, password and account name.
 type Entry struct {
-	Login, Password, Account string
+	Login, Password, Account, PrintFormat string
 }
 
 type Netrc struct {
 	Entries map[string]Entry
 }
+
+// Keywords to be searched for inside the .netrc file
+var keywords = [...]string{"default", "machine", "password", "login", "account", "macdef"}
 
 // Gives the location of .netrc according to convention
 func Location() string {
@@ -25,14 +30,16 @@ func Location() string {
 		location = "_netrc"
 	}
 
-	return os.ExpandEnv("$HOME") + string(os.PathSeparator) + location
+	//return os.ExpandEnv("$HOME") + string(os.PathSeparator) + location
+	return "D:" + string(os.PathSeparator) + location
 }
 
 func checkPermissions(fileName string) error {
 	info, err := os.Stat(fileName)
 	if err == nil {
 		mode := info.Mode()
-		if mode != 0600 {
+		//if mode != 0600 {
+		if mode != 0666 {
 			return fmt.Errorf("Refused to touch", fileName, "with unacceptable permissions", mode)
 		}
 	} else if e, ok := err.(*os.PathError); !ok || e.Err != syscall.ENOENT {
@@ -49,7 +56,7 @@ func Parse() (*Netrc, error) {
 		return nil, err
 	}
 
-	file, err := os.OpenFile(fileName, os.O_RDWR|os.O_CREATE, 0600)
+	file, err := os.OpenFile(fileName, os.O_RDONLY|os.O_CREATE, 0600)
 
 	if err != nil {
 		return nil, err
@@ -57,41 +64,58 @@ func Parse() (*Netrc, error) {
 	defer file.Close()
 
 	scanner := bufio.NewScanner(file)
-	scanner.Split(bufio.ScanWords)
+	// Read line by line instead of word by word
+	scanner.Split(bufio.ScanLines)
 
 	hostname := ""
 	var entry *Entry = nil
 
 	netrc := &Netrc{Entries: map[string]Entry{}}
 	for scanner.Scan() {
-		token := scanner.Text()
+		line := scanner.Text()
 
-		switch token {
-		case "default":
-			if entry != nil {
-				netrc.Entries[hostname] = *entry
+		// Foreach keyword try to find it on the current read line
+		for _, keyword := range keywords {
+			re := regexp.MustCompile(keyword + ` ([^ ]+)\n?`)
+
+			res := re.FindStringSubmatch(line)
+
+			if (len(res) == 0) {
+				continue
 			}
-			entry = new(Entry)
-			hostname = ""
-		case "machine":
-			if entry != nil {
-				netrc.Entries[hostname] = *entry
+
+			// If the line contains the searched keyword
+			// then extract data to entry
+			switch keyword {
+			case "default":
+				if entry != nil {
+					netrc.Entries[hostname] = *entry
+				}
+				entry = new(Entry)
+				hostname = ""
+			case "machine":
+				if entry != nil {
+					netrc.Entries[hostname] = *entry
+				}
+				entry = new(Entry)
+				hostname = res[1]
+			case "password":
+				entry.Password = res[1]
+			case "login":
+				entry.Login = res[1]
+			case "account":
+				entry.Account = res[1]
+			case "macdef":
+				return nil, fmt.Errorf(fileName, "contains at least one macro definition. This is currently not supported giving up.")
 			}
-			entry = new(Entry)
-			scanner.Scan()
-			hostname = scanner.Text()
-		case "password":
-			scanner.Scan()
-			entry.Password = scanner.Text()
-		case "login":
-			scanner.Scan()
-			entry.Login = scanner.Text()
-		case "account":
-			scanner.Scan()
-			entry.Account = scanner.Text()
-		case "macdef":
-			return nil, fmt.Errorf(fileName, "contains at least one macro definition. This is currently not supported giving up.")
+
+			// Generate format string that will be used for printing
+			// for current row or update it
+			line = strings.Replace(line, res[1], "%s", 1)
 		}
+
+		// Save format string to entry
+		entry.PrintFormat = entry.PrintFormat + line + "\n"
 	}
 
 	// catch the last entry
@@ -114,26 +138,55 @@ func (netrc Netrc) Save() error {
 	writer := bufio.NewWriter(file)
 
 	for key, value := range netrc.Entries {
-		if key == "" {
-			writer.WriteString("default\n")
+		// If the entry has been parsed there is a
+		// print format string that we should use
+		if (value.PrintFormat != "") {
+			values := []interface{}{key}
+			// Append the values that are not empty
+			if (value.Account != "") {
+				values = append(values, value.Account)
+			}
+			if (value.Login != "") {
+				values = append(values, value.Login)
+			}
+			if (value.Password != "") {
+				values = append(values, value.Password)
+			}
+			// Generate string from format and values
+			result := fmt.Sprintf(value.PrintFormat, values...)
+			writer.WriteString(result)
 		} else {
-			writer.WriteString("machine " + key + "\n")
-		}
+			if key == "" {
+				writer.WriteString("default\n")
+			} else {
+				writer.WriteString("machine " + key + "\n")
+			}
 
-		if value.Account != "" {
-			writer.WriteString("\taccount " + value.Account + "\n")
+			if value.Account != "" {
+				writer.WriteString("\taccount " + value.Account + "\n")
+			}
+			if value.Login != "" {
+				writer.WriteString("\tlogin " + value.Login + "\n")
+			}
+			if value.Password != "" {
+				writer.WriteString("\tpassword " + value.Password + "\n")
+			}
 		}
-		if value.Login != "" {
-			writer.WriteString("\tlogin " + value.Login + "\n")
-		}
-		if value.Password != "" {
-			writer.WriteString("\tpassword " + value.Password + "\n")
-		}
-
-		writer.WriteString("\n")
 	}
 
 	writer.Flush()
 
 	return nil
+}
+
+func main() {
+	var netrc, _ = Parse()
+
+	var entry *Entry = nil
+	entry = new(Entry)
+	entry.Password = "testpass"
+	entry.Login = "testlogin"
+	netrc.Entries["test"] = *entry
+
+	netrc.Save()
 }
