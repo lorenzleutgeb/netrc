@@ -11,6 +11,9 @@ import (
 // Holds one entry of .netrc as a tuple of login name, password and account name.
 type Entry struct {
 	Login, Password, Account string
+	// Flag used to see whether the formatting is needed
+	// or not when saving the data
+	IsParsed bool
 }
 
 type Netrc struct {
@@ -28,7 +31,7 @@ func Location() string {
 	return os.ExpandEnv("$HOME") + string(os.PathSeparator) + location
 }
 
-func checkPermissions(fileName string) error {
+func CheckPermissions(fileName string) error {
 	info, err := os.Stat(fileName)
 	if err == nil {
 		mode := info.Mode()
@@ -45,11 +48,11 @@ func checkPermissions(fileName string) error {
 func Parse() (*Netrc, error) {
 	fileName := Location()
 
-	if err := checkPermissions(fileName); err != nil {
+	if err := CheckPermissions(fileName); err != nil {
 		return nil, err
 	}
 
-	file, err := os.OpenFile(fileName, os.O_RDWR|os.O_CREATE, 0600)
+	file, err := os.OpenFile(fileName, os.O_RDONLY|os.O_CREATE, 0600)
 
 	if err != nil {
 		return nil, err
@@ -92,6 +95,11 @@ func Parse() (*Netrc, error) {
 		case "macdef":
 			return nil, fmt.Errorf(fileName, "contains at least one macro definition. This is currently not supported giving up.")
 		}
+
+		// Set the flag that the entry was just parsed from file
+		// This way, when saving the entries, the formatting is 
+		// skipped if the entry was read from file
+		entry.IsParsed = true;
 	}
 
 	// catch the last entry
@@ -104,7 +112,8 @@ func Parse() (*Netrc, error) {
 
 // Writes back .netrc to disk
 func (netrc Netrc) Save() error {
-	file, err := os.OpenFile(Location(), os.O_WRONLY|os.O_TRUNC, 0600)
+	// Use O_APPEND flag to write at the end of file
+	file, err := os.OpenFile(Location(), os.O_APPEND|os.O_WRONLY, 0600)
 
 	if err != nil {
 		return err
@@ -113,11 +122,15 @@ func (netrc Netrc) Save() error {
 
 	writer := bufio.NewWriter(file)
 
+
 	for key, value := range netrc.Entries {
+		if (value.IsParsed) {
+			continue
+		}
 		if key == "" {
-			writer.WriteString("default\n")
+			writer.WriteString("\ndefault\n")
 		} else {
-			writer.WriteString("machine " + key + "\n")
+			writer.WriteString("\nmachine " + key + "\n")
 		}
 
 		if value.Account != "" {
@@ -129,8 +142,6 @@ func (netrc Netrc) Save() error {
 		if value.Password != "" {
 			writer.WriteString("\tpassword " + value.Password + "\n")
 		}
-
-		writer.WriteString("\n")
 	}
 
 	writer.Flush()
