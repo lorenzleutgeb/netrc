@@ -8,19 +8,17 @@ import (
 	"syscall"
 )
 
-// Holds one entry of .netrc as a tuple of login name, password and account name.
+// Entry holds one entry of .netrc as a tuple of login name, password and account name.
 type Entry struct {
 	Login, Password, Account string
 }
 
-type Netrc struct {
-	Entries map[string]Entry
-}
+// Entries maps a machine name to an Entry.
+type Entries map[string]Entry
 
-// Gives the location of .netrc according to convention
+// Location gives the location of .netrc according to convention.
 func Location() string {
 	location := ".netrc"
-
 	if runtime.GOOS == "windows" {
 		location = "_netrc"
 	}
@@ -33,7 +31,7 @@ func checkPermissions(fileName string) error {
 	if err == nil {
 		mode := info.Mode()
 		if mode != 0600 {
-			return fmt.Errorf("Refused to touch", fileName, "with unacceptable permissions", mode)
+			return fmt.Errorf("netrc: refused to touch %s with unacceptable permissions %v", fileName, mode)
 		}
 	} else if e, ok := err.(*os.PathError); !ok || e.Err != syscall.ENOENT {
 		return err
@@ -41,8 +39,8 @@ func checkPermissions(fileName string) error {
 	return nil
 }
 
-// Reads .netrc from it's default location
-func Parse() (*Netrc, error) {
+// Parse reads .netrc from it's default location
+func Parse() (Entries, error) {
 	fileName := Location()
 
 	if err := checkPermissions(fileName); err != nil {
@@ -60,22 +58,22 @@ func Parse() (*Netrc, error) {
 	scanner.Split(bufio.ScanWords)
 
 	hostname := ""
-	var entry *Entry = nil
+	var entry *Entry
 
-	netrc := &Netrc{Entries: map[string]Entry{}}
+	netrc := Entries{}
 	for scanner.Scan() {
 		token := scanner.Text()
 
 		switch token {
 		case "default":
 			if entry != nil {
-				netrc.Entries[hostname] = *entry
+				netrc[hostname] = *entry
 			}
 			entry = new(Entry)
 			hostname = ""
 		case "machine":
 			if entry != nil {
-				netrc.Entries[hostname] = *entry
+				netrc[hostname] = *entry
 			}
 			entry = new(Entry)
 			scanner.Scan()
@@ -96,14 +94,14 @@ func Parse() (*Netrc, error) {
 
 	// catch the last entry
 	if entry != nil {
-		netrc.Entries[hostname] = *entry
+		netrc[hostname] = *entry
 	}
 
 	return netrc, scanner.Err()
 }
 
-// Writes back .netrc to disk
-func (netrc Netrc) Save() error {
+// Save writes back .netrc to disk
+func (netrc Entries) Save() error {
 	file, err := os.OpenFile(Location(), os.O_WRONLY|os.O_TRUNC, 0600)
 
 	if err != nil {
@@ -113,7 +111,7 @@ func (netrc Netrc) Save() error {
 
 	writer := bufio.NewWriter(file)
 
-	for key, value := range netrc.Entries {
+	for key, value := range netrc {
 		if key == "" {
 			writer.WriteString("default\n")
 		} else {
