@@ -2,7 +2,9 @@ package netrc
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"runtime"
 	"syscall"
@@ -53,8 +55,12 @@ func Parse() (Entries, error) {
 		return nil, err
 	}
 	defer file.Close()
+	return parse(file)
+}
 
-	scanner := bufio.NewScanner(file)
+func parse(r io.Reader) (Entries, error) {
+
+	scanner := bufio.NewScanner(r)
 	scanner.Split(bufio.ScanWords)
 
 	hostname := ""
@@ -88,7 +94,7 @@ func Parse() (Entries, error) {
 			scanner.Scan()
 			entry.Account = scanner.Text()
 		case "macdef":
-			return nil, fmt.Errorf(fileName, "contains at least one macro definition. This is currently not supported giving up.")
+			return nil, errors.New("Not support macro definition.")
 		}
 	}
 
@@ -110,7 +116,10 @@ func (netrc Entries) Save() error {
 	defer file.Close()
 
 	writer := bufio.NewWriter(file)
+	return netrc.save(writer)
+}
 
+func (netrc Entries) save(writer *bufio.Writer) error {
 	for key, value := range netrc {
 		if key == "" {
 			writer.WriteString("default\n")
